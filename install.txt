@@ -1,0 +1,7 @@
+python -m venv venv
+pip install uv
+uv install fastmcp
+uv init
+uv add fastmcp
+
+curl -LsSf https://astral.sh/uv/install.sh | sh
