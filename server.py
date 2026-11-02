@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """jDaLink testserver — fase 0: tools valideren met mock-data."""
 from mcp.server.mcpserver import MCPServer
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -36,7 +36,6 @@ def jdalog_list_signals() -> dict:
         lst[i]["unit"] = lst[i].get("unit", "")
         lst[i]["time"] = datetime.fromtimestamp(lst[i]["time"]).astimezone().isoformat(timespec="milliseconds")
     rv = {"signals":lst}
-    print(rv)
     return rv
 
 @mcp.tool()
@@ -50,9 +49,8 @@ def jdalog_get_latest(s: str) -> dict:
             "age": lst[s]["age"], "valid": lst[s]["valid"], 
             "time": datetime.fromtimestamp(lst[s]["time"]).astimezone().isoformat(timespec="milliseconds"), 
             "unit":lst[s].get("unit", "")}
-
-    print ( rv)
     return rv
+
 
 @mcp.tool()
 def jdalog_get_lastchange(s: str) -> dict:
@@ -89,27 +87,69 @@ def jdalog_get_lastchange(s: str) -> dict:
         rv["time_sincelastchange"] = time.time() - lastchange
         rv["value_beforelastchange"] = lastvalue_store
 
-    print(rv)
     return rv
-            
 
-#def parse_window(t_from: str, t_to: str):
-#    """ISO 8601 of relatief ('now', '24h', 'yesterday 00:00'); default Europe/Amsterdam."""
-#    # TODO fase 1: echte resolver met zoneinfo. Voor de test: naïef.
-#    return datetime.fromisoformat(t_from), datetime.fromisoformat(t_to)
+def parse_iso(s: str) -> float:
+    """ISO 8601 -> epoch seconden (float, dus fractionele seconden gratis)."""
+    s = s.strip().replace("Z", "+00:00")   # 3.11+-shim; laat staan mag op ≥3.11
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:                  # naïef? dan lokale tijd van de host
+        dt = dt.astimezone()              # (of expliciet: dt.replace(tzinfo=...)
+    return dt.timestamp()
 
-#@mcp.tool()
-#def jdalog_duration_above(signal: str, threshold: float,
-#                          t_from: str = "24h", t_to: str = "now") -> dict:
-#    """Aantal seconden dat het signaal boven de threshold lag binnen het venster.
-#    t_from/t_to: ISO 8601 (default-zone Europe/Amsterdam) of relatief: 'now', '24h',
-#    'yesterday 00:00'. Retourneert ook het aantal flanken (aan/uit wissels)."""
-#    f, t = parse_window(t_from, t_to)
-#    # mock: 3 kwartier boven de drempel, 5 flanken
-#    return {"signal": signal, "threshold": threshold,
-#            "window": [f.isoformat(), t.isoformat()],
-#            "seconds_above": 2700, "flanks": 5,
-#            "note": "MOCK — nog niet aangesloten op jDaLog"}
+@mcp.tool()
+def jdalog_get_summary(signals: list[str], start: str, end: str, bins: int, include_edges: bool = False) -> dict:
+    """
+    Summary of one or more signals side by side over the same time window.
+    Use jdalog_list_signals for the exact names.
+    Inputs: 
+        signals - list of signal keys/descriptors (1 or more)
+        start - from, start-time of the summary, ISO format.
+        end - to, end-time of the summary, ISO format.
+        bins - Number of bins to display in the summary.
+        include_edges - Optional, result includes edge counters if set to True.
+    """
+    signals = [s.strip() for s in signals if s.strip()]
+
+    with urllib.request.urlopen("http://" + conf["jDaLog_ip"] + "/in.json") as r:
+        lst = json.loads(r.read())
+    for signal in signals:
+        if signal not in lst:
+            return {"error": f"unknown signal: {signal}", "known signals": list(lst)}
+
+    t0 = parse_iso(start);
+    t1 = parse_iso(end);
+    
+    if t0 >= t1:
+        raise ValueError(f"start ({start}) must be before end ({end})")
+    if bins < 1:
+        raise ValueError(f"bins must be >= 1, got {bins}")
+    
+    first = True
+    rv = {}
+    for signal in signals:
+        url = "http://" + conf["jDaLog_ip"] + f"/in/{signal}/json/summary_{t0:.0f}_{t1:.0f}_{bins}.json"
+        with urllib.request.urlopen(url) as r:
+            j = r.read()
+            recs = json.loads(j)
+            if first:
+                first = False
+                rv = recs
+            else:
+                rv["signals"][signal] = recs["signals"][signal]
+    
+    # Translate the timestamps to ISO format. Rest of the summary format is OK.
+    # Optionally removes the edge counters.
+    rv["from"] = datetime.fromtimestamp(recs["from"]).astimezone().isoformat(timespec="milliseconds")
+    rv["to"] = datetime.fromtimestamp(recs["to"]).astimezone().isoformat(timespec="milliseconds")
+    for signal in signals:
+        for b in rv["signals"][signal]["bins"]:
+            b["t"] = datetime.fromtimestamp(b["t"]).astimezone().isoformat(timespec="milliseconds")
+            if not include_edges:
+                b.pop("pos_edge", None)
+                b.pop("neg_edge", None)
+                
+    return rv
 
 # app opbouwen mét middleware, dan draaien met uvicorn:
 app = mcp.streamable_http_app()   # het ASGI-app van je FastMCP-server
