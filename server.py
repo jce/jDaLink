@@ -10,7 +10,9 @@ from pathlib import Path
 import json
 import urllib.request
 import time
+import unicodedata, subprocess
 
+    
 with open("config.json", "r") as f:
     conf = json.load(f)
 
@@ -150,6 +152,32 @@ def jdalog_get_summary(signals: list[str], start: str, end: str, bins: int, incl
                 b.pop("neg_edge", None)
                 
     return rv
+
+@mcp.tool()
+def jdalink_print(text: str) -> dict:
+    """
+    Print a short text message on jce's Epson FX-800 dot-matrix printer (MMI-fun tool).
+    Text is ASCII-transliterated (no accents), wrapped at 80 columns (10 cpi).
+    """
+
+    # diacrities eraf strippen: é -> e (FX-800 basis-charset is USA-ASCII)
+    clean = unicodedata.normalize("NFKD", text)
+    clean = "".join(c for c in clean if not unicodedata.combining(c))
+    clean = "".join(c if (32 <= ord(c) < 127 or c == "\n") else "?" for c in clean)
+
+    # Wake the printer. It stays awake for about 30 minutes. Plenty of time.
+    subprocess.run([conf["printer_on_cmd"]], check=True)
+
+    lines = []
+    for line in clean.split("\n"):
+        while len(line) > 80:
+            lines.append(line[:80]); line = line[80:]
+        lines.append(line)
+    payload = "\n".join(lines) + "\n"
+
+    with open(conf["printer"], "wb") as f:
+        f.write(payload.encode("ascii"))
+    return {"ok": True, "chars": len(clean), "lines": len(lines)}
 
 # app opbouwen mét middleware, dan draaien met uvicorn:
 app = mcp.streamable_http_app()   # het ASGI-app van je FastMCP-server

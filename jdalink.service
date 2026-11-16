@@ -1,0 +1,19 @@
+# /etc/systemd/system/jdalink.service 
+[Unit] 
+Description=jDaLink MCP shim (uvicorn op 127.0.0.1:8000) 
+After=network-online.target 
+Wants=network-online.target 
+ 
+[Service] 
+Type=simple 
+# Replace "you" with the actual user.
+User=you 
+# Replace "you" with the actual path.
+WorkingDirectory=/home/you/projects/jDaLink 
+ExecStart=/home/you/projects/jDaLink/venv/bin/python server.py 
+Restart=on-failure 
+RestartSec=5 
+ 
+[Install] 
+WantedBy=multi-user.target
+

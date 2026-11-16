@@ -1,4 +1,6 @@
 {
     "Bearer":"your_bearer_key_here",
-    "jDaLog_ip":"jdalog_ip_including_port"
+    "jDaLog_ip":"jdalog_ip_including_port",
+    "printer":"/dev/fx-800",
+    "printer_on_cmd":"printer_on.py"
 }
